@@ -1,25 +1,41 @@
+import torch
+from torch.utils.data import DataLoader, Subset
 from torchtext.datasets import WikiText2
 from torchvision.datasets import CIFAR10
 from ogb.graphproppred import PygGraphPropPredDataset
 import datasetcleaning as dst
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, Subset
 
-class Dataloader():
-  def __init__(self):
-    pass
-  
-  def __call__(self):
-    text_transform = dst.TextDatasetTransformation()
-    image_transform = dst.ImageDatasetTransformation()
-    graph_transform = dst.GraphDatasetTransformation()
-    
-    text_subset = Subset(list(WikiText2(split='train')), range(500))
-    image_subset = Subset(CIFAR10(root='./data', train=True, download=True, transform=image_transform), range(500))
-    graph_subset = Subset(PygGraphPropPredDataset(name='ogbg-molhiv'), range(500))
-    
-    dataset = dst.MultiModalDataset(text_subset, image_subset, graph_subset,
-                           text_transform, image_transform, graph_transform)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
-    
-    return dataloader
+# Create transformations first
+text_transform = dst.TextDatasetTransformation()
+image_transform = dst.ImageDatasetTransformation()
+graph_transform = dst.GraphDatasetTransformation()
+
+# Load datasets with proper transformations
+# For WikiText2, collect samples into a list first
+wiki_data = []
+for i, text in enumerate(WikiText2(split='train')):
+    if i >= 500:
+        break
+    wiki_data.append(text)
+
+# For CIFAR10, use the image_transform
+image_subset = Subset(CIFAR10(root='./data', train=True, download=True), range(500))
+
+# For graph data, handle the special indexing
+graph_dataset = PygGraphPropPredDataset(name='ogbg-molhiv')
+graph_subset = []
+for i in range(min(500, len(graph_dataset))):
+    graph_subset.append(graph_dataset[i])
+
+# Create the multimodal dataset
+dataset = dst.MultiModalDataset(
+    wiki_data, 
+    image_subset, 
+    graph_subset,
+    text_transform, 
+    image_transform, 
+    graph_transform
+)
+
+# Create dataloader
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
