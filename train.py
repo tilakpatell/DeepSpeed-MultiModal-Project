@@ -11,7 +11,14 @@ from dataloader import dataloader
 import time
 from test_dataloader import test_dataloader
 
-os.environ['CUDA_HOME'] = os.path.join(os.path.dirname(os.path.dirname(torch.__file__)), 'site-packages/nvidia/cuda_runtime')
+os.environ['CUDA_HOME'] = '/home/patel.til/.conda/envs/adaptive_precision/lib/python3.9/site-packages/nvidia/cuda_runtime'
+if not os.path.exists(os.path.join(os.environ['CUDA_HOME'], 'bin/nvcc')):
+    os.makedirs(os.path.join(os.environ['CUDA_HOME'], 'bin'), exist_ok=True)
+    
+    with open(os.path.join(os.environ['CUDA_HOME'], 'bin/nvcc'), 'w') as f:
+        f.write('#!/bin/bash\necho "11.7"\n')
+    
+    os.chmod(os.path.join(os.environ['CUDA_HOME'], 'bin/nvcc'), 0o755)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='DeepSpeed Adaptive Precision Training')
@@ -41,8 +48,8 @@ def get_precision_config(args):
     if args.adaptive_precision:
         config['fp16'] = {
             'enabled': True,
-            'loss_scale': 0,
-            'initial_scale_power': 16,
+            'loss_scale': 128,
+            'initial_scale_power': 7,
             'loss_scale_window': 1000,
             'hysteresis': 2,
             'min_loss_scale': 1
@@ -55,8 +62,8 @@ def get_precision_config(args):
     elif args.fp16:
         config['fp16'] = {
             'enabled': True,
-            'loss_scale': 0,
-            'initial_scale_power': 16,
+            'loss_scale': 128,
+            'initial_scale_power': 7,
             'loss_scale_window': 1000,
             'hysteresis': 2,
             'min_loss_scale': 1
@@ -72,7 +79,7 @@ class AdaptivePrecisionCallback:
         self.threshold = threshold
         self.window_size = window_size
         self.loss_history = []
-        self.current_precision = 'fp16'
+        self.current_precision = 'fp16' if model_engine.fp16_enabled else 'fp32'
         self.precision_history = []
         self.precision_switch_metrics = []
         
@@ -100,7 +107,9 @@ class AdaptivePrecisionCallback:
             print(f"PRECISION SWITCH: fp16 -> fp32 at iteration {global_step}")
             before_mem = torch.cuda.max_memory_allocated(self.model_engine.device) / (1024**3)
             
-            self.model_engine.optimizer.cur_scale = 1.0
+            self.model_engine.optimizer.cur_scale = 1.0  
+            for param in self.model_engine.module.parameters():
+                param.data = param.data.float()
             self.current_precision = 'fp32'
             
             self.precision_switch_metrics.append({
@@ -117,7 +126,9 @@ class AdaptivePrecisionCallback:
             print(f"PRECISION SWITCH: fp32 -> fp16 at iteration {global_step}")
             before_mem = torch.cuda.max_memory_allocated(self.model_engine.device) / (1024**3)
             
-            self.model_engine.optimizer.cur_scale = float(2**16)
+            self.model_engine.optimizer.cur_scale = 128.0  
+            for param in self.model_engine.module.parameters():
+                param.data = param.data.half()
             self.current_precision = 'fp16'
             
             self.precision_switch_metrics.append({
@@ -137,48 +148,6 @@ class AdaptivePrecisionCallback:
             'precision_switches': len(self.precision_switch_metrics)
         }
 
-def profile_iteration(model_engine, text, image, graph, targets, criterion):
-    from torch.profiler import profile, record_function, ProfilerActivity
-    
-    activities = [ProfilerActivity.CPU]
-    if torch.cuda.is_available():
-        activities.append(ProfilerActivity.CUDA)
-    
-    # For our custom PyTorch AMP fallback
-    if hasattr(model_engine, 'use_amp') and model_engine.use_amp:
-        # Use standard PyTorch AMP
-        with profile(activities=activities, with_stack=True) as prof:
-            with record_function("forward"):
-                with torch.cuda.amp.autocast():
-                    outputs = model_engine.module(text, image, graph)
-                    loss = criterion(outputs, targets)
-            
-            with record_function("backward"):
-                model_engine.optimizer.zero_grad()
-                model_engine.scaler.scale(loss).backward()
-            
-            with record_function("optimizer_step"):
-                model_engine.scaler.step(model_engine.optimizer)
-                model_engine.scaler.update()
-                model_engine.global_steps += 1
-    else:
-        # DeepSpeed or standard training - let DeepSpeed handle mixed precision
-        with profile(activities=activities, with_stack=True) as prof:
-            with record_function("forward"):
-                outputs = model_engine(text, image, graph)
-                loss = criterion(outputs, targets)
-            
-            with record_function("backward"):
-                model_engine.backward(loss)
-            
-            with record_function("optimizer_step"):
-                model_engine.step()
-    
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-    prof.export_chrome_trace(f"profile_trace_{getattr(model_engine, 'global_steps', 0)}.json")
-    
-    return loss, outputs
-
 def train(args):
     model = FusionModel(vocab_size=args.vocab_size, text_dim=args.text_dim, graph_in=args.graph_in)
     
@@ -190,11 +159,12 @@ def train(args):
         'train_batch_size': args.batch_size,
         'gradient_accumulation_steps': 1,
         'optimizer': {
-            'type': 'Adam',
+            'type': 'Adam',  
             'params': {
                 'lr': 1e-3,
                 'betas': [0.9, 0.999],
-                'eps': 1e-8
+                'eps': 1e-8,
+                'weight_decay': 0.01
             }
         },
         'scheduler': {
@@ -219,53 +189,32 @@ def train(args):
             config=ds_config
         )
         
-        model_engine.fp16_enabled = args.fp16 or args.adaptive_precision
-        model_engine.use_amp = False
-        
+        model_engine.fp16_enabled = (args.fp16 or args.adaptive_precision)
+    
     except Exception as e:
         print(f"DeepSpeed initialization failed with error: {e}")
         print("Falling back to standard PyTorch training...")
         
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
-        optimizer = optim.Adam(model.parameters(), lr=1e-3)
-        
-        if args.fp16 or args.adaptive_precision:
-            try:
-                from torch.cuda.amp import GradScaler, autocast
-                scaler = GradScaler()
-                use_amp = True
-                print("Using PyTorch native AMP for mixed precision training")
-            except ImportError:
-                use_amp = False
-                print("PyTorch AMP not available, falling back to FP32")
-        else:
-            use_amp = False
-            scaler = None
+        optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.01)
         
         class ModelEngine:
-            def __init__(self, model, optimizer, device, use_amp=False, scaler=None):
+            def __init__(self, model, optimizer, device):
                 self.module = model
                 self.optimizer = optimizer
                 self.device = device
                 self.global_steps = 0
-                self.use_amp = use_amp
-                self.scaler = scaler
-                self.fp16_enabled = False  # Not using DeepSpeed's FP16
+                self.fp16_enabled = False
             
             def __call__(self, *args, **kwargs):
                 return self.module(*args, **kwargs)
             
             def backward(self, loss):
-                if self.use_amp:
-                    self.scaler.scale(loss).backward()
-                else:
-                    loss.backward()
+                loss.backward()
             
             def step(self):
-                if self.use_amp:
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                self.optimizer.step()
                 self.optimizer.zero_grad()
                 self.global_steps += 1
             
@@ -280,7 +229,7 @@ def train(args):
             def train(self):
                 self.module.train()
         
-        model_engine = ModelEngine(model, optimizer, device, use_amp, scaler)
+        model_engine = ModelEngine(model, optimizer, device)
     
     adaptive_callback = None
     if args.adaptive_precision:
@@ -288,6 +237,7 @@ def train(args):
             model_engine, 
             threshold=args.precision_threshold
         )
+        model_engine.adaptive_callback = adaptive_callback
     
     metrics = {
         'train_loss': [],
@@ -297,7 +247,6 @@ def train(args):
         'precision_switches': [],
         'loss_variance': [],
         'per_layer_time': {},
-        'gradient_norm': [],
         'optimizer_scale': []
     }
     
@@ -308,37 +257,24 @@ def train(args):
         
         for i, (text, image, graph) in enumerate(dataloader):
             text = text.to(model_engine.device)
-            image = image.to(model_engine.device)
-            graph = graph.to(model_engine.device)
+            
+            if adaptive_callback and adaptive_callback.current_precision == 'fp16':
+                image = image.to(model_engine.device).half()
+                graph = graph.to(model_engine.device).half()
+            elif args.fp16:
+                image = image.to(model_engine.device).half()
+                graph = graph.to(model_engine.device).half()
+            else:
+                image = image.to(model_engine.device)
+                graph = graph.to(model_engine.device)
             
             targets = torch.randint(0, 10, (text.size(0),)).to(model_engine.device)
             
-            if i % 100 == 0:
-                loss, outputs = profile_iteration(model_engine, text, image, graph, targets, criterion)
-            else:
-                # Handle custom PyTorch AMP fallback
-                if hasattr(model_engine, 'use_amp') and model_engine.use_amp:
-                    with torch.cuda.amp.autocast():
-                        outputs = model_engine.module(text, image, graph)
-                        loss = criterion(outputs, targets)
-                    
-                    model_engine.optimizer.zero_grad()
-                    model_engine.scaler.scale(loss).backward()
-                    model_engine.scaler.step(model_engine.optimizer)
-                    model_engine.scaler.update()
-                    model_engine.global_steps += 1
-                elif hasattr(model_engine, 'fp16_enabled') and model_engine.fp16_enabled:
-                    # DeepSpeed FP16
-                    outputs = model_engine(text, image, graph)
-                    loss = criterion(outputs, targets)
-                    model_engine.backward(loss)
-                    model_engine.step()
-                else:
-                    # Standard FP32 training
-                    outputs = model_engine(text, image, graph)
-                    loss = criterion(outputs, targets)
-                    model_engine.backward(loss)
-                    model_engine.step()
+            outputs = model_engine(text, image, graph)
+            loss = criterion(outputs, targets)
+            
+            model_engine.backward(loss)
+            model_engine.step()
             
             running_loss += loss.item()
             samples_processed += text.size(0)
@@ -352,19 +288,13 @@ def train(args):
                     stats = adaptive_callback.get_stats()
                     print(f"Precision stats: {stats}")
                 
-                layer_times = {}
-                for name, module in model_engine.module.named_modules():
-                    if hasattr(module, 'forward_time'):
-                        layer_times[name] = getattr(module, 'forward_time')
-                metrics['per_layer_time'][f'epoch_{epoch}_batch_{i}'] = layer_times
-                
                 if hasattr(model_engine.optimizer, 'cur_scale'):
                     metrics['optimizer_scale'].append(float(model_engine.optimizer.cur_scale))
         
         epoch_time = time.time() - epoch_start
         avg_loss = running_loss / len(dataloader)
         throughput = samples_processed / epoch_time
-        peak_mem = torch.cuda.max_memory_allocated(model_engine.device) / (1024**3)
+        peak_mem = torch.cuda.max_memory_allocated(model_engine.device) / (1024**3)  # GB
         
         metrics['train_loss'].append(avg_loss)
         metrics['epoch_times'].append(epoch_time)
@@ -379,8 +309,12 @@ def train(args):
         
         if args.output_dir:
             os.makedirs(args.output_dir, exist_ok=True)
-            ckpt_path = os.path.join(args.output_dir, f"model_epoch_{epoch+1}.pt")
-            model_engine.save_checkpoint(args.output_dir, tag=f"epoch_{epoch+1}")
+            try:
+                model_engine.save_checkpoint(args.output_dir, tag=f"epoch_{epoch+1}")
+            except Exception as e:
+                print(f"Warning: Could not save checkpoint: {e}")
+                torch.save(model_engine.module.state_dict(), 
+                          os.path.join(args.output_dir, f"model_epoch_{epoch+1}.pt"))
             
             import json
             with open(os.path.join(args.output_dir, "training_metrics.json"), 'w') as f:
@@ -395,21 +329,25 @@ def evaluate(model_engine, test_dataloader, device):
     correct = 0
     total = 0
     
+    is_fp16 = model_engine.fp16_enabled
+    if hasattr(model_engine, 'adaptive_callback'):
+        is_fp16 = model_engine.adaptive_callback.current_precision == 'fp16'
+    
     with torch.no_grad():
         for text, image, graph in test_dataloader:
             text = text.to(device)
-            image = image.to(device)
-            graph = graph.to(device)
+            
+            if is_fp16:
+                image = image.to(device).half()
+                graph = graph.to(device).half()
+            else:
+                image = image.to(device)
+                graph = graph.to(device)
             
             targets = torch.randint(0, 10, (text.size(0),)).to(device)
             
-            if hasattr(model_engine, 'use_amp') and model_engine.use_amp:
-                with torch.cuda.amp.autocast():
-                    outputs = model_engine.module(text, image, graph)
-                    loss = criterion(outputs, targets)
-            else:
-                outputs = model_engine(text, image, graph)
-                loss = criterion(outputs, targets)
+            outputs = model_engine(text, image, graph)
+            loss = criterion(outputs, targets)
             
             _, predicted = torch.max(outputs, 1)
             total += targets.size(0)

@@ -1,4 +1,3 @@
-# main.py
 import argparse
 from model import FusionModel
 from datasetcleaning import MultiModalDataset
@@ -9,7 +8,7 @@ def main():
     parser = argparse.ArgumentParser(description='Adaptive Precision Training Framework')
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
     
-    # Add experiment runner parser
+    
     exp_parser = subparsers.add_parser('run_experiments', help='Run training experiments')
     exp_parser.add_argument('--output_dir', type=str, default='./experiments',
                         help='Directory to store experiment results')
@@ -20,7 +19,7 @@ def main():
     exp_parser.add_argument('--epochs', type=int, default=5,
                         help='Number of epochs for each experiment')
     
-    # Add analyzer parser
+    
     analyze_parser = subparsers.add_parser('analyze', help='Analyze experimental results')
     analyze_parser.add_argument('--experiments_dir', type=str, default='./experiments',
                         help='Directory containing experiment results')

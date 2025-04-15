@@ -1,4 +1,3 @@
-# test_dataloader.py
 import torch
 import os
 from torch.utils.data import DataLoader, Subset
@@ -12,16 +11,15 @@ text_transform = dst.TextDatasetTransformation()
 image_transform = dst.ImageDatasetTransformation()
 graph_transform = dst.GraphDatasetTransformation()
 
-# Set a stable download directory in the current project
+# Set a stable download directory in the current project for ghe datasets
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Load test datasets with proper transformations
-# For IMDB, collect samples into a list first
 test_wiki_data = []
 try:
     for i, (label, text) in enumerate(IMDB(split='test', root=DATA_DIR)):
-        if i >= 100:  # Using smaller test set
+        if i >= 100:
             break
         test_wiki_data.append(text)
 except Exception as e:
@@ -29,19 +27,17 @@ except Exception as e:
     # Fallback to a small set of dummy text samples if loading fails
     test_wiki_data = ["Sample test movie review text"] * 100
 
-# For CIFAR10, use the image_transform
+# Use the image_transform
 test_image_subset = Subset(CIFAR10(root=DATA_DIR, train=False, download=True, 
                              transform=image_transform), range(100))
 
-# For graph data, handle the special indexing
+# Handle the special indexing
 graph_dataset = PygGraphPropPredDataset(name='ogbg-molhiv', root=DATA_DIR)
-# Use the last 100 samples for testing
 test_indices = range(len(graph_dataset) - 100, len(graph_dataset))
 test_graph_subset = []
 for i in test_indices:
     test_graph_subset.append(graph_dataset[i])
 
-# Create the multimodal test dataset
 test_dataset = dst.MultiModalDataset(
     test_wiki_data, 
     test_image_subset, 

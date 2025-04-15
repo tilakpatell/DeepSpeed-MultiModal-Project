@@ -48,7 +48,7 @@ class GraphDatasetTransformation():
         node_features = graph.x
         
         if node_features is None or node_features.shape[0] == 0:
-            return torch.zeros(self.output_dim)
+            return torch.zeros(self.output_dim, dtype=torch.float32)
             
         if node_features.dtype == torch.long or node_features.dtype == torch.int:
             node_features = node_features.float()
@@ -61,8 +61,9 @@ class GraphDatasetTransformation():
             if self.projection is None or self.projection.in_features != graph_features.shape[0]:
                 self.projection = torch.nn.Linear(graph_features.shape[0], self.output_dim)
             graph_features = self.projection(graph_features)
-                
-        return graph_features.detach()
+        
+        # Always return float32 to ensure consistency in the pipeline
+        return graph_features.float().detach()
 
 class MultiModalDataset(Dataset):
     def __init__(self, text_data, image_data, graph_data, 

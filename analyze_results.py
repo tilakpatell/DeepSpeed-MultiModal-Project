@@ -1,4 +1,3 @@
-# analyze_results.py
 import os
 import json
 import argparse
@@ -20,12 +19,12 @@ def load_experiment_data(experiments_dir):
     """Load data from all experiment directories"""
     results = []
     
-    # Find all experiment directories
+    
     for exp_dir in glob(os.path.join(experiments_dir, "*")):
         if not os.path.isdir(exp_dir):
             continue
         
-        # Load metadata
+        
         metadata_path = os.path.join(exp_dir, 'metadata.json')
         if not os.path.exists(metadata_path):
             print(f"Skipping {exp_dir} - no metadata.json")
@@ -34,7 +33,7 @@ def load_experiment_data(experiments_dir):
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
         
-        # Load training metrics if available
+        
         metrics_path = os.path.join(exp_dir, 'training_metrics.json')
         training_metrics = None
         
@@ -42,7 +41,7 @@ def load_experiment_data(experiments_dir):
             with open(metrics_path, 'r') as f:
                 training_metrics = json.load(f)
         
-        # Combine data
+        
         experiment_data = {
             'experiment_name': metadata.get('experiment_name', os.path.basename(exp_dir)),
             'gpu_type': metadata.get('gpu_type', 'unknown'),
@@ -52,7 +51,7 @@ def load_experiment_data(experiments_dir):
             'duration_seconds': metadata.get('duration_seconds', 0),
         }
         
-        # Add summary metrics from training if available
+        
         if training_metrics:
             experiment_data.update({
                 'avg_loss': np.mean(training_metrics.get('train_loss', [0])),
@@ -71,10 +70,10 @@ def generate_comparison_plots(df, output_dir):
     """Generate comparison plots for different metrics"""
     os.makedirs(output_dir, exist_ok=True)
     
-    # Group by GPU type and precision mode
+    
     grouped = df.groupby(['gpu_type', 'precision_mode'])
     
-    # Throughput comparison
+    
     plt.figure(figsize=(12, 8))
     for (gpu, precision), group in grouped:
         plt.plot(group['batch_size'], group['avg_throughput'], 
@@ -87,7 +86,7 @@ def generate_comparison_plots(df, output_dir):
     plt.legend()
     plt.savefig(os.path.join(output_dir, 'throughput_comparison.png'))
     
-    # Memory usage comparison
+    
     plt.figure(figsize=(12, 8))
     for (gpu, precision), group in grouped:
         plt.plot(group['batch_size'], group['peak_memory'], 
@@ -100,7 +99,7 @@ def generate_comparison_plots(df, output_dir):
     plt.legend()
     plt.savefig(os.path.join(output_dir, 'memory_comparison.png'))
     
-    # Training loss comparison
+    
     plt.figure(figsize=(12, 8))
     for (gpu, precision), group in grouped:
         plt.plot(group['batch_size'], group['last_loss'], 
@@ -113,23 +112,23 @@ def generate_comparison_plots(df, output_dir):
     plt.legend()
     plt.savefig(os.path.join(output_dir, 'loss_comparison.png'))
     
-    # GPU type performance comparison (adaptive vs fp16)
+    
     plt.figure(figsize=(12, 8))
     
     gpu_types = df['gpu_type'].unique()
     x = np.arange(len(gpu_types))
     width = 0.3
     
-    # Filter to a common batch size
+    
     common_bs = df['batch_size'].median()
     bs_data = df[df['batch_size'] == common_bs]
     
-    # Get data for each precision mode
+    
     fp32_data = bs_data[bs_data['precision_mode'] == 'fp32']['avg_throughput'].values
     fp16_data = bs_data[bs_data['precision_mode'] == 'fp16']['avg_throughput'].values
     adaptive_data = bs_data[bs_data['precision_mode'] == 'adaptive']['avg_throughput'].values
     
-    # Pad arrays if needed
+    
     max_len = len(gpu_types)
     fp32_data = np.pad(fp32_data, (0, max(0, max_len - len(fp32_data))))
     fp16_data = np.pad(fp16_data, (0, max(0, max_len - len(fp16_data))))
@@ -147,19 +146,19 @@ def generate_comparison_plots(df, output_dir):
     plt.grid(True, linestyle='--', alpha=0.3, axis='y')
     plt.savefig(os.path.join(output_dir, 'gpu_comparison.png'))
     
-    # Save raw data for the plots
+    
     df.to_csv(os.path.join(output_dir, 'experiment_data.csv'), index=False)
 
 def generate_summary_report(df, output_dir):
     """Generate a summary report of all experiments"""
     report_path = os.path.join(output_dir, 'summary_report.html')
     
-    # Calculate relative performance metrics
+    
     gpu_types = df['gpu_type'].unique()
     precision_modes = df['precision_mode'].unique()
     batch_sizes = sorted(df['batch_size'].unique())
     
-    # Create summary tables
+    
     html = """
     <html>
     <head>
@@ -180,7 +179,7 @@ def generate_summary_report(df, output_dir):
         <h1>Adaptive Precision Training Experiment Results</h1>
     """
     
-    # Add throughput comparison table
+    
     html += """
         <h2>Throughput Comparison (samples/second)</h2>
         <table>
@@ -199,7 +198,7 @@ def generate_summary_report(df, output_dir):
         for bs in batch_sizes:
             html += f"<tr><td>{gpu}</td><td>{bs}</td>"
             
-            # Get throughput for each precision mode
+            
             fp32_throughput = df[(df['gpu_type'] == gpu) & 
                                 (df['batch_size'] == bs) & 
                                 (df['precision_mode'] == 'fp32')]['avg_throughput'].values
@@ -212,7 +211,7 @@ def generate_summary_report(df, output_dir):
                                     (df['batch_size'] == bs) & 
                                     (df['precision_mode'] == 'adaptive')]['avg_throughput'].values
             
-            # Add cells with data or placeholder
+            
             fp32_val = fp32_throughput[0] if len(fp32_throughput) > 0 else 0
             fp16_val = fp16_throughput[0] if len(fp16_throughput) > 0 else 0
             adaptive_val = adaptive_throughput[0] if len(adaptive_throughput) > 0 else 0
@@ -221,7 +220,7 @@ def generate_summary_report(df, output_dir):
             html += f"<td>{fp16_val:.2f}</td>"
             html += f"<td>{adaptive_val:.2f}</td>"
             
-            # Calculate relative performance
+            
             if fp32_val > 0 and adaptive_val > 0:
                 relative_fp32 = (adaptive_val / fp32_val - 1) * 100
                 html += f"<td>{relative_fp32:.1f}%</td>"
@@ -238,7 +237,7 @@ def generate_summary_report(df, output_dir):
     
     html += "</table>"
     
-    # Add memory usage comparison table
+    
     html += """
         <h2>Memory Usage Comparison (GB)</h2>
         <table>
@@ -257,7 +256,7 @@ def generate_summary_report(df, output_dir):
         for bs in batch_sizes:
             html += f"<tr><td>{gpu}</td><td>{bs}</td>"
             
-            # Get memory usage for each precision mode
+            
             fp32_memory = df[(df['gpu_type'] == gpu) & 
                             (df['batch_size'] == bs) & 
                             (df['precision_mode'] == 'fp32')]['peak_memory'].values
@@ -270,7 +269,7 @@ def generate_summary_report(df, output_dir):
                                 (df['batch_size'] == bs) & 
                                 (df['precision_mode'] == 'adaptive')]['peak_memory'].values
             
-            # Add cells with data or placeholder
+            
             fp32_val = fp32_memory[0] if len(fp32_memory) > 0 else 0
             fp16_val = fp16_memory[0] if len(fp16_memory) > 0 else 0
             adaptive_val = adaptive_memory[0] if len(adaptive_memory) > 0 else 0
@@ -279,7 +278,7 @@ def generate_summary_report(df, output_dir):
             html += f"<td>{fp16_val:.2f}</td>"
             html += f"<td>{adaptive_val:.2f}</td>"
             
-            # Calculate relative performance
+            
             if fp32_val > 0 and adaptive_val > 0:
                 relative_fp32 = (adaptive_val / fp32_val - 1) * 100
                 html += f"<td>{relative_fp32:.1f}%</td>"
@@ -296,7 +295,7 @@ def generate_summary_report(df, output_dir):
     
     html += "</table>"
     
-    # Add summary and insights
+    
     html += """
         <div class="summary">
             <h2>Summary and Insights</h2>
@@ -307,13 +306,13 @@ def generate_summary_report(df, output_dir):
             <ul>
     """
     
-    # Calculate average performance improvements
+    
     adaptive_vs_fp32 = []
     adaptive_vs_fp16 = []
     
     for gpu in gpu_types:
         for bs in batch_sizes:
-            # Get throughput values
+            
             fp32_throughput = df[(df['gpu_type'] == gpu) & 
                                 (df['batch_size'] == bs) & 
                                 (df['precision_mode'] == 'fp32')]['avg_throughput'].values
@@ -326,14 +325,14 @@ def generate_summary_report(df, output_dir):
                                     (df['batch_size'] == bs) & 
                                     (df['precision_mode'] == 'adaptive')]['avg_throughput'].values
             
-            # Calculate relative improvements
+            
             if len(fp32_throughput) > 0 and len(adaptive_throughput) > 0 and fp32_throughput[0] > 0:
                 adaptive_vs_fp32.append((adaptive_throughput[0] / fp32_throughput[0] - 1) * 100)
                 
             if len(fp16_throughput) > 0 and len(adaptive_throughput) > 0 and fp16_throughput[0] > 0:
                 adaptive_vs_fp16.append((adaptive_throughput[0] / fp16_throughput[0] - 1) * 100)
     
-    # Add insights based on data
+    
     if adaptive_vs_fp32:
         avg_vs_fp32 = np.mean(adaptive_vs_fp32)
         html += f"<li>On average, adaptive precision training was {avg_vs_fp32:.1f}% faster than FP32 training.</li>"
@@ -345,13 +344,12 @@ def generate_summary_report(df, output_dir):
         else:
             html += f"<li>On average, adaptive precision training was {-avg_vs_fp16:.1f}% slower than fixed FP16 training, but likely achieved better numerical stability.</li>"
     
-    # Add GPU-specific insights
+    
     for gpu in gpu_types:
         gpu_adaptive_vs_fp32 = []
         gpu_adaptive_vs_fp16 = []
         
         for bs in batch_sizes:
-            # Get throughput values for this GPU
             fp32_throughput = df[(df['gpu_type'] == gpu) & 
                                 (df['batch_size'] == bs) & 
                                 (df['precision_mode'] == 'fp32')]['avg_throughput'].values
@@ -364,14 +362,13 @@ def generate_summary_report(df, output_dir):
                                     (df['batch_size'] == bs) & 
                                     (df['precision_mode'] == 'adaptive')]['avg_throughput'].values
             
-            # Calculate relative improvements
             if len(fp32_throughput) > 0 and len(adaptive_throughput) > 0 and fp32_throughput[0] > 0:
                 gpu_adaptive_vs_fp32.append((adaptive_throughput[0] / fp32_throughput[0] - 1) * 100)
                 
             if len(fp16_throughput) > 0 and len(adaptive_throughput) > 0 and fp16_throughput[0] > 0:
                 gpu_adaptive_vs_fp16.append((adaptive_throughput[0] / fp16_throughput[0] - 1) * 100)
         
-        # Add GPU-specific insight
+        
         if gpu_adaptive_vs_fp32 and gpu_adaptive_vs_fp16:
             avg_gpu_vs_fp32 = np.mean(gpu_adaptive_vs_fp32)
             avg_gpu_vs_fp16 = np.mean(gpu_adaptive_vs_fp16)
@@ -383,7 +380,7 @@ def generate_summary_report(df, output_dir):
             else:
                 html += f"but {-avg_gpu_vs_fp16:.1f}% slower than FP16.</li>"
     
-    # Add batch size insights
+    
     max_bs_idx = -1
     max_improvement = -float('inf')
     
@@ -391,7 +388,6 @@ def generate_summary_report(df, output_dir):
         bs_adaptive_vs_fp16 = []
         
         for gpu in gpu_types:
-            # Get throughput values for this batch size
             fp16_throughput = df[(df['gpu_type'] == gpu) & 
                                 (df['batch_size'] == bs) & 
                                 (df['precision_mode'] == 'fp16')]['avg_throughput'].values
@@ -400,7 +396,6 @@ def generate_summary_report(df, output_dir):
                                     (df['batch_size'] == bs) & 
                                     (df['precision_mode'] == 'adaptive')]['avg_throughput'].values
             
-            # Calculate relative improvements
             if len(fp16_throughput) > 0 and len(adaptive_throughput) > 0 and fp16_throughput[0] > 0:
                 bs_adaptive_vs_fp16.append((adaptive_throughput[0] / fp16_throughput[0] - 1) * 100)
         
@@ -426,7 +421,7 @@ def generate_summary_report(df, output_dir):
         </div>
     """
     
-    # Add image references
+    
     html += """
         <h2>Performance Visualizations</h2>
         <img src="throughput_comparison.png" alt="Throughput Comparison">
@@ -439,7 +434,7 @@ def generate_summary_report(df, output_dir):
     </html>
     """
     
-    # Write HTML report
+    
     with open(report_path, 'w') as f:
         f.write(html)
     
@@ -449,14 +444,14 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Load experiment data
+    
     df = load_experiment_data(args.experiments_dir)
     
     if df.empty:
         print("No experiment data found!")
         return
     
-    # Generate plots and analysis
+    
     generate_comparison_plots(df, args.output_dir)
     generate_summary_report(df, args.output_dir)
     

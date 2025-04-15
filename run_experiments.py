@@ -1,4 +1,3 @@
-# run_experiments.py
 import os
 import argparse
 import json
@@ -24,7 +23,6 @@ def parse_args():
 def get_gpu_type():
     """Attempt to determine GPU type"""
     try:
-        # Using nvidia-smi to get GPU info
         result = subprocess.run(['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
                                stdout=subprocess.PIPE, text=True)
         gpu_name = result.stdout.strip()
@@ -45,7 +43,7 @@ def run_experiment(batch_size, precision_mode, output_dir, epochs=5):
     experiment_dir = os.path.join(output_dir, experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
     
-    # Build command
+    
     cmd = [
         'deepspeed',
         '--num_gpus=1',
@@ -55,24 +53,24 @@ def run_experiment(batch_size, precision_mode, output_dir, epochs=5):
         f'--output_dir={experiment_dir}'
     ]
     
-    # Add precision flags
+    
     if precision_mode == 'fp16':
         cmd.append('--fp16')
     elif precision_mode == 'adaptive':
         cmd.append('--adaptive_precision')
     
-    # Log command
+    
     with open(os.path.join(experiment_dir, 'command.txt'), 'w') as f:
         f.write(' '.join(cmd))
     
-    # Run experiment
+    
     print(f"Starting experiment: {experiment_name}")
     start_time = time.time()
     
     try:
         result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
-        # Save stdout and stderr
+        
         with open(os.path.join(experiment_dir, 'stdout.log'), 'w') as f:
             f.write(result.stdout)
         with open(os.path.join(experiment_dir, 'stderr.log'), 'w') as f:
@@ -80,7 +78,7 @@ def run_experiment(batch_size, precision_mode, output_dir, epochs=5):
             
         status = 'success'
     except subprocess.CalledProcessError as e:
-        # Log failure
+        
         with open(os.path.join(experiment_dir, 'stdout.log'), 'w') as f:
             f.write(e.stdout if e.stdout else '')
         with open(os.path.join(experiment_dir, 'stderr.log'), 'w') as f:
@@ -88,7 +86,7 @@ def run_experiment(batch_size, precision_mode, output_dir, epochs=5):
         
         status = 'failed'
     
-    # Record experiment metadata
+    
     duration = time.time() - start_time
     metadata = {
         'experiment_name': experiment_name,
@@ -111,32 +109,32 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Record all experiments
+    
     all_results = []
     
-    # For each GPU type (this script assumes you run it on each type separately)
+    
     gpu_type = get_gpu_type()
     if gpu_type in args.gpu_types or 'all' in args.gpu_types:
         print(f"Running experiments on GPU: {gpu_type}")
         
-        # Run baseline FP32 experiments
+        
         for batch_size in args.batch_sizes:
             result = run_experiment(batch_size, 'fp32', args.output_dir, args.epochs)
             all_results.append(result)
         
-        # Run FP16 experiments
+        
         for batch_size in args.batch_sizes:
             result = run_experiment(batch_size, 'fp16', args.output_dir, args.epochs)
             all_results.append(result)
         
-        # Run adaptive precision experiments
+        
         for batch_size in args.batch_sizes:
             result = run_experiment(batch_size, 'adaptive', args.output_dir, args.epochs)
             all_results.append(result)
     else:
         print(f"Current GPU ({gpu_type}) not in requested types: {args.gpu_types}")
     
-    # Save summary of all experiments
+    
     with open(os.path.join(args.output_dir, 'experiments_summary.json'), 'w') as f:
         json.dump(all_results, f, indent=2)
     
