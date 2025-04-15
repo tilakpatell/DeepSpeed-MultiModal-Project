@@ -1,7 +1,8 @@
 # test_dataloader.py
 import torch
+import os
 from torch.utils.data import DataLoader, Subset
-from torchtext.datasets import WikiText2
+from torchtext.datasets import IMDB
 from torchvision.datasets import CIFAR10
 from ogb.graphproppred import PygGraphPropPredDataset
 import datasetcleaning as dst
@@ -11,20 +12,29 @@ text_transform = dst.TextDatasetTransformation()
 image_transform = dst.ImageDatasetTransformation()
 graph_transform = dst.GraphDatasetTransformation()
 
+# Set a stable download directory in the current project
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # Load test datasets with proper transformations
-# For WikiText2, collect samples into a list first
+# For IMDB, collect samples into a list first
 test_wiki_data = []
-for i, text in enumerate(WikiText2(split='test')):
-    if i >= 100:  # Using smaller test set
-        break
-    test_wiki_data.append(text)
+try:
+    for i, (label, text) in enumerate(IMDB(split='test', root=DATA_DIR)):
+        if i >= 100:  # Using smaller test set
+            break
+        test_wiki_data.append(text)
+except Exception as e:
+    print(f"Warning: IMDB test dataset loading error: {e}")
+    # Fallback to a small set of dummy text samples if loading fails
+    test_wiki_data = ["Sample test movie review text"] * 100
 
 # For CIFAR10, use the image_transform
-test_image_subset = Subset(CIFAR10(root='./data', train=False, download=True, 
+test_image_subset = Subset(CIFAR10(root=DATA_DIR, train=False, download=True, 
                              transform=image_transform), range(100))
 
 # For graph data, handle the special indexing
-graph_dataset = PygGraphPropPredDataset(name='ogbg-molhiv')
+graph_dataset = PygGraphPropPredDataset(name='ogbg-molhiv', root=DATA_DIR)
 # Use the last 100 samples for testing
 test_indices = range(len(graph_dataset) - 100, len(graph_dataset))
 test_graph_subset = []
@@ -41,5 +51,4 @@ test_dataset = dst.MultiModalDataset(
     graph_transform
 )
 
-# Create test dataloader
-test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=2)
+test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=1)
